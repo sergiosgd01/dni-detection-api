@@ -1,0 +1,49 @@
+# Core FastAPI
+fastapi==0.120.2
+uvicorn[standard]==0.38.0
+python-multipart==0.0.20
+starlette==0.49.1
+
+# Computer Vision
+opencv-python-headless==4.10.0.84
+numpy==2.2.6
+Pillow==12.0.0
+
+# Deep Learning - YOLO
+ultralytics==8.3.225
+torch==2.9.0
+torchvision==0.24.0
+
+# Utilities
+pydantic==2.12.3
+pydantic-core==2.41.4
+typing-extensions==4.15.0
+
+# HTTP & Async
+httptools==0.7.1
+python-dotenv==1.2.1
+watchfiles==1.1.1
+websockets==15.0.1
+
+# Data Processing (requerido por ultralytics)
+PyYAML==6.0.3
+requests==2.32.5
+certifi==2025.10.5
+charset-normalizer==3.4.4
+urllib3==2.5.0
+idna==3.11
+
+# Logging & Utils
+coloredlogs==15.0.1
+humanfriendly==10.0
+
+# Scientific Computing (requerido por ultralytics)
+scipy==1.16.3
+matplotlib==3.10.7
+pandas==2.2.3
+seaborn==0.13.2
+
+# Additional dependencies for ultralytics
+tqdm==4.67.1
+psutil==7.1.2
+py-cpuinfo==9.0.0
