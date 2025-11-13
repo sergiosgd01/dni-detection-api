@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, status
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
 from contextlib import asynccontextmanager
 from pathlib import Path
 import io
@@ -194,6 +195,84 @@ def create_binary_mask(mask: np.ndarray, frame_shape: tuple) -> np.ndarray:
     mask_bin = (mask_resized > Config.MASK_THRESHOLD).astype(np.uint8) * 255
     return mask_bin
 
+def process_dni_pipeline(contents: bytes, filename: str):
+    """
+    Pipeline síncrono completo de procesado de DNI.
+    Se ejecutará en un threadpool para no bloquear el event loop.
+    """
+    # Decodificar imagen
+    frame = decode_image(contents)
+    if frame is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se pudo decodificar la imagen. Archivo corrupto o formato inválido"
+        )
+    
+    logger.info(f"📸 Procesando imagen: {filename} ({frame.shape[1]}x{frame.shape[0]})")
+    
+    # Detección YOLO
+    mask, confidence = process_yolo_detection(frame)
+    logger.info(f"🎯 DNI detectado con confianza: {confidence:.2%}")
+    
+    # Confianza mínima
+    MIN_CONFIDENCE = 0.80
+    if confidence is not None and confidence < MIN_CONFIDENCE:
+        confidence_percent = f"{confidence * 100:.1f}%"
+        logger.warning(f"⚠️ Confianza insuficiente: {confidence_percent}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "low_confidence",
+                "message": f"La imagen del DNI no es suficientemente clara (confianza: {confidence_percent})",
+                "confidence": float(confidence),
+                "min_required": MIN_CONFIDENCE,
+                "suggestion": "Para una mejor captura:\n• Mejora la iluminación\n• Mantén la cámara estable\n• Asegúrate de que el DNI esté enfocado\n• Evita reflejos y sombras",
+                "action": "retry"
+            }
+        )
+    
+    # Crear máscara binaria
+    mask_bin = create_binary_mask(mask, frame.shape)
+    
+    # Corregir perspectiva y recortar
+    dni_crop = corregir_perspectiva(frame, mask_bin)
+    
+    if dni_crop is None or dni_crop.size == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "extraction_failed",
+                "message": "No se pudo extraer el DNI correctamente",
+                "suggestion": "Verifica que:\n• El DNI esté completamente visible\n• No esté parcialmente tapado\n• Esté dentro del recuadro guía",
+                "action": "retry"
+            }
+        )
+    
+    logger.info(f"✂️  DNI recortado: {dni_crop.shape[1]}x{dni_crop.shape[0]}")
+    
+    # Codificar imagen de salida
+    encode_params = [cv2.IMWRITE_JPEG_QUALITY, Config.JPEG_QUALITY]
+    success, img_encoded = cv2.imencode('.jpg', dni_crop, encode_params)
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al codificar la imagen procesada"
+        )
+    
+    # Crear respuesta
+    response = StreamingResponse(
+        io.BytesIO(img_encoded.tobytes()),
+        media_type="image/jpeg"
+    )
+    
+    if confidence is not None:
+        response.headers["x-confidence"] = str(confidence)
+    
+    logger.info(f"✅ Procesamiento exitoso - Confianza: {confidence:.1%}")
+    return response
+
+
 # 📍 Endpoints
 
 @app.get("/")
@@ -234,16 +313,9 @@ async def process_image(file: UploadFile = File(...)):
     🎯 Endpoint principal para procesar imágenes de DNI
     
     - **file**: Imagen del DNI (JPG, PNG, WEBP, max 10MB)
-    
-    Returns:
-        - **200**: Imagen procesada (image/jpeg) con header x-confidence
-        - **422**: Errores controlados (no_detection, no_mask, low_confidence, extraction_failed)
-        - **400**: Error en el formato de archivo
-        - **413**: Archivo muy grande
-        - **500**: Error interno del servidor
     """
     try:
-        # Validar archivo
+        # Validar archivo (extensión, MIME, etc.)
         validate_image_file(file)
         
         # Leer y validar tamaño
@@ -254,81 +326,16 @@ async def process_image(file: UploadFile = File(...)):
                 detail=f"Archivo muy grande. Máximo: {Config.MAX_FILE_SIZE // (1024*1024)}MB"
             )
         
-        # Decodificar imagen
-        frame = decode_image(contents)
-        if frame is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se pudo decodificar la imagen. Archivo corrupto o formato inválido"
-            )
-        
-        logger.info(f"📸 Procesando imagen: {file.filename} ({frame.shape[1]}x{frame.shape[0]})")
-        
-        # Detección YOLO
-        mask, confidence = process_yolo_detection(frame)
-        logger.info(f"🎯 DNI detectado con confianza: {confidence:.2%}")
-        
-        # ✅ CASO 3: Confianza insuficiente (< 80%)
-        MIN_CONFIDENCE = 0.80
-        if confidence is not None and confidence < MIN_CONFIDENCE:
-            confidence_percent = f"{confidence * 100:.1f}%"
-            logger.warning(f"⚠️ Confianza insuficiente: {confidence_percent}")
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "low_confidence",
-                    "message": f"La imagen del DNI no es suficientemente clara (confianza: {confidence_percent})",
-                    "confidence": float(confidence),
-                    "min_required": MIN_CONFIDENCE,
-                    "suggestion": "Para una mejor captura:\n• Mejora la iluminación\n• Mantén la cámara estable\n• Asegúrate de que el DNI esté enfocado\n• Evita reflejos y sombras",
-                    "action": "retry"
-                }
-            )
-        
-        # Crear máscara binaria
-        mask_bin = create_binary_mask(mask, frame.shape)
-        
-        # Corregir perspectiva y recortar
-        dni_crop = corregir_perspectiva(frame, mask_bin)
-        
-        # ✅ CASO 4: No se pudo extraer el DNI
-        if dni_crop is None or dni_crop.size == 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "extraction_failed",
-                    "message": "No se pudo extraer el DNI correctamente",
-                    "suggestion": "Verifica que:\n• El DNI esté completamente visible\n• No esté parcialmente tapado\n• Esté dentro del recuadro guía",
-                    "action": "retry"
-                }
-            )
-        
-        logger.info(f"✂️  DNI recortado: {dni_crop.shape[1]}x{dni_crop.shape[0]}")
-        
-        # Codificar imagen de salida
-        encode_params = [cv2.IMWRITE_JPEG_QUALITY, Config.JPEG_QUALITY]
-        success, img_encoded = cv2.imencode('.jpg', dni_crop, encode_params)
-        
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error al codificar la imagen procesada"
-            )
-        
-        # ✅ ÉXITO: Crear respuesta
-        response = StreamingResponse(
-            io.BytesIO(img_encoded.tobytes()),
-            media_type="image/jpeg"
+        # ⚠️ Aquí viene el truco: ejecutamos TODO el pipeline en un hilo
+        response = await run_in_threadpool(
+            process_dni_pipeline,
+            contents,
+            file.filename or "uploaded_image"
         )
-        
-        # Headers personalizados
-        if confidence is not None:
-            response.headers["x-confidence"] = str(confidence)
-        
-        logger.info(f"✅ Procesamiento exitoso - Confianza: {confidence:.1%}")
         return response
         
     except HTTPException:
+        # Re-lanzar errores controlados
         raise
     except Exception as e:
         logger.error(f"❌ Error inesperado: {e}", exc_info=True)
@@ -336,6 +343,30 @@ async def process_image(file: UploadFile = File(...)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error interno del servidor: {str(e)}"
         )
+
+def process_dni_debug_pipeline(contents: bytes):
+    """Pipeline síncrono para el endpoint de debug."""
+    frame = decode_image(contents)
+    
+    if frame is None:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Imagen inválida"}
+        )
+    
+    mask, confidence = process_yolo_detection(frame)
+    mask_bin = create_binary_mask(mask, frame.shape)
+    dni_crop = corregir_perspectiva(frame, mask_bin)
+    
+    return {
+        "success": dni_crop is not None,
+        "confidence": float(confidence) if confidence else None,
+        "original_size": {"width": frame.shape[1], "height": frame.shape[0]},
+        "cropped_size": {"width": dni_crop.shape[1], "height": dni_crop.shape[0]} if dni_crop is not None else None,
+        "mask_points": int(np.sum(mask_bin > 0)),
+        "environment": "production" if os.getenv('RENDER') else "development"
+    }
+
 
 @app.post("/process-debug")
 async def process_image_debug(file: UploadFile = File(...)):
@@ -346,26 +377,12 @@ async def process_image_debug(file: UploadFile = File(...)):
     try:
         validate_image_file(file)
         contents = await file.read()
-        frame = decode_image(contents)
         
-        if frame is None:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Imagen inválida"}
-            )
-        
-        mask, confidence = process_yolo_detection(frame)
-        mask_bin = create_binary_mask(mask, frame.shape)
-        dni_crop = corregir_perspectiva(frame, mask_bin)
-        
-        return {
-            "success": dni_crop is not None,
-            "confidence": float(confidence) if confidence else None,
-            "original_size": {"width": frame.shape[1], "height": frame.shape[0]},
-            "cropped_size": {"width": dni_crop.shape[1], "height": dni_crop.shape[0]} if dni_crop is not None else None,
-            "mask_points": int(np.sum(mask_bin > 0)),
-            "environment": "production" if os.getenv('RENDER') else "development"
-        }
+        result = await run_in_threadpool(
+            process_dni_debug_pipeline,
+            contents
+        )
+        return result
         
     except HTTPException as e:
         return JSONResponse(
@@ -378,6 +395,7 @@ async def process_image_debug(file: UploadFile = File(...)):
             status_code=500,
             content={"error": str(e)}
         )
+
 
 # 🚀 Entry point
 if __name__ == "__main__":
