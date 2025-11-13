@@ -12,15 +12,13 @@ class Settings:
     MODEL_PATH: str = os.getenv("MODEL_PATH", "model/model_trained_victor_yolo11n.pt")
     
     # CORS - Orígenes permitidos
-    ALLOWED_ORIGINS: list[str] = ["*"]  
-
-    # ALLOWED_ORIGINS: list[str] = [
-    #     "http://localhost:5173",
-    #     "http://localhost:3000",
-    #     "http://localhost:5174",
-    #     "https://proyectodni.netlify.app",
-    #     "*"  # ⚠️ En producción, elimina esto y deja solo dominios específicos
-    # ]
+    ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:5174",
+        "https://proyectodni.netlify.app",
+        "*"  # ⚠️ En producción, elimina esto y deja solo dominios específicos
+    ]
     
     # YOLO - Parámetros de detección
     CONFIDENCE_THRESHOLD: float = 0.4
