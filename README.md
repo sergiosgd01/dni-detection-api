@@ -2,6 +2,15 @@
 
 API para detección y recorte automático de DNI usando YOLO11 y FastAPI.
 
+## 🎯 Dos versiones disponibles
+
+| Versión | Archivo | Descripción |
+|---------|---------|-------------|
+| **Original** | `main.py` | Versión monolítica (todo en un archivo) |
+| **Modular** ⭐ | `main_modular.py` | Versión modularizada (recomendada) |
+
+> 💡 **Recomendación**: Usa `main_modular.py` para nuevo desarrollo.
+
 ## 🚀 Características
 
 - ✅ Detección automática de DNI en imágenes
