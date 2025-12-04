@@ -2,51 +2,29 @@
 Procesamiento de detección con YOLO
 """
 import numpy as np
+import cv2
 from fastapi import HTTPException, status
 import logging
 from typing import Tuple, Optional
 
 from config.settings import settings
+from detection.geometry_utils import four_point_transform 
 
 logger = logging.getLogger(__name__)
 
-# Variable global para el modelo (se inicializa en main.py)
+# Variable global para el modelo
 model = None
 
-
 def set_model(yolo_model):
-    """
-    Establece el modelo YOLO global
-    
-    Args:
-        yolo_model: Modelo YOLO cargado
-    """
     global model
     model = yolo_model
 
-
 def get_model():
-    """
-    Obtiene el modelo YOLO global
-    
-    Returns:
-        Modelo YOLO o None si no está cargado
-    """
     return model
-
 
 def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[float]]:
     """
-    Ejecuta la detección YOLO y procesa la máscara
-    
-    Args:
-        frame: Imagen como array de NumPy (BGR)
-        
-    Returns:
-        Tupla (máscara, confianza)
-        
-    Raises:
-        HTTPException: Si hay errores en la detección
+    Ejecuta detección YOLO y aplica la tubería de corrección.
     """
     if model is None:
         raise HTTPException(
@@ -64,49 +42,63 @@ def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[floa
     
     # CASO 1: No se detectó nada
     if not results or len(results) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": "no_detection",
-                "message": "No se detectó ningún DNI en la imagen",
-                "suggestion": "Asegúrate de que:\n• El DNI esté dentro del recuadro\n• El DNI sea visible y esté bien iluminado\n• No haya objetos tapando el DNI",
-                "action": "retry"
-            }
-        )
+        raise_detection_error("no_detection", "No se detectó ningún DNI en la imagen")
     
     result = results[0]
     
     # CASO 2: Detección sin máscaras
     if result.masks is None or len(result.masks) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": "no_mask",
-                "message": "No se pudo identificar claramente el DNI",
-                "suggestion": "Intenta:\n• Acercar más el DNI a la cámara\n• Mejorar la iluminación\n• Reducir el movimiento",
-                "action": "retry"
-            }
-        )
+        raise_detection_error("no_mask", "No se pudo identificar la segmentación del DNI")
+
+    # Obtener la detección con mayor confianza
+    if result.boxes:
+        confidences = result.boxes.conf.cpu().numpy()
+        best_idx = np.argmax(confidences)
+        confidence = float(confidences[best_idx])
+    else:
+        confidence = 0.0
+        best_idx = 0
+
+    # Obtener coordenadas XY del polígono
+    mask_data = result.masks.xy[best_idx]
     
-    # Obtener máscara con mayor confianza
-    mask = result.masks.data[0].cpu().numpy()
+    if len(mask_data) < 4:
+        raise_detection_error("invalid_mask", "La máscara detectada tiene muy pocos puntos")
+
+    contour = np.array(mask_data, dtype=np.int32)
     
-    # Obtener confianza de detección
-    confidence = float(result.boxes.conf[0].cpu().numpy()) if result.boxes else None
+    # Intentar aproximación a 4 puntos
+    approx = None
+    for epsilon_factor in [0.01, 0.02, 0.03, 0.05]:
+        epsilon = epsilon_factor * cv2.arcLength(contour, True)
+        temp_approx = cv2.approxPolyDP(contour, epsilon, True)
+        if len(temp_approx) == 4:
+            approx = temp_approx
+            break
     
-    return mask, confidence
+    # Si no funciona, usar minAreaRect
+    if approx is None or len(approx) != 4:
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect)
+        approx = np.int32(box)
+    
+    # Validar y Transformar
+    if len(approx) == 4:
+        pts = approx.reshape(4, 2).astype(np.float32)
+        
+        # Aplicar transformación
+        warped_dni = four_point_transform(frame, pts, scale=4)
+        
+        if warped_dni is None:
+            raise_detection_error("warp_error", "Error calculando la perspectiva")
+
+        # 👈 Devolver directamente sin enhance (mantiene color original)
+        return warped_dni, confidence
+    else:
+        raise_detection_error("geometry_error", "No se pudieron determinar las 4 esquinas del DNI")
 
 
 def validate_confidence(confidence: Optional[float]) -> None:
-    """
-    Valida que la confianza sea suficiente
-    
-    Args:
-        confidence: Nivel de confianza de la detección
-        
-    Raises:
-        HTTPException: Si la confianza es insuficiente
-    """
     if confidence is not None and confidence < settings.MIN_CONFIDENCE_OUTPUT:
         confidence_percent = f"{confidence * 100:.1f}%"
         logger.warning(f"⚠️ Confianza insuficiente: {confidence_percent}")
@@ -114,10 +106,18 @@ def validate_confidence(confidence: Optional[float]) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={
                 "error": "low_confidence",
-                "message": f"La imagen del DNI no es suficientemente clara (confianza: {confidence_percent})",
-                "confidence": float(confidence),
-                "min_required": settings.MIN_CONFIDENCE_OUTPUT,
-                "suggestion": "Para una mejor captura:\n• Mejora la iluminación\n• Mantén la cámara estable\n• Asegúrate de que el DNI esté enfocado\n• Evita reflejos y sombras",
+                "message": f"Detección poco clara ({confidence_percent}). Mejora la iluminación.",
                 "action": "retry"
             }
         )
+
+
+def raise_detection_error(code: str, msg: str):
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": code,
+            "message": msg,
+            "action": "retry"
+        }
+    )
