@@ -2,14 +2,13 @@ services:
   - type: web
     name: dni-detection-api
     runtime: python
-    region: oregon
-    plan: free
-    branch: main
+    region: frankfurt
+    plan: free  # 👈 Cambia a free para probar
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: "3.11.4"
       - key: MODEL_PATH
-        value: model/model_trained_victor_yolo11n.pt
+        value: "model/model_trained_yolov8-seg_sergio.pt"
     healthCheckPath: /health

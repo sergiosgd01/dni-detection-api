@@ -43,7 +43,20 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+test_images/
 
 # Env files
 .env
 .env.local
+
+# ===== NOTEBOOKS =====
+*.ipynb
+.ipynb_checkpoints/
+
+# ===== MODELOS =====
+# Ignorar todos los modelos excepto el de producción
+model/*.pt
+!model/model_trained_yolov8-seg_sergio.pt
+
+# ===== ARCHIVOS ESPECÍFICOS =====
+requirements-notebook.txt

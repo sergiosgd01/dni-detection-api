@@ -9,7 +9,7 @@ class Settings:
     """Configuración de la aplicación DNI Detection API"""
     
     # Modelo
-    MODEL_PATH: str = os.getenv("MODEL_PATH", "model/model_trained_victor_yolo11n.pt")
+    MODEL_PATH: str = os.getenv("MODEL_PATH", "model/model_trained_yolov8-seg_sergio.pt")
     
     # CORS - Orígenes permitidos
     ALLOWED_ORIGINS: list[str] = [

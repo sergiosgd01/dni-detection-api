@@ -70,7 +70,23 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
+
+# Middleware adicional para manejar ngrok y CORS
+@app.middleware("http")
+async def add_process_time_header(request, call_next):
+    response = await call_next(request)
+    
+    # Headers para ngrok
+    response.headers["ngrok-skip-browser-warning"] = "true"
+    
+    # Headers CORS adicionales (por si acaso)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 # Incluir rutas desde el módulo api
 app.include_router(router)
