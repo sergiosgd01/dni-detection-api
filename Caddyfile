@@ -1,0 +1,3 @@
+ia.defiendetuidentidad.es {
+    reverse_proxy localhost:8000
+}

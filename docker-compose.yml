@@ -1,0 +1,16 @@
+services:
+  dni-api:
+    build: .
+    container_name: dni-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - MODEL_PATH=model/model_trained_yolov8-seg_sergio.pt
+      - ENVIRONMENT=production
+    volumes:
+      # Opcional: Montar el modelo si quieres actualizarlo sin reconstruir
+      # - ./model:/app/model
+      # Persistir logs si fuera necesario (ajustar según configuración de logs)
+      - ./logs:/app/logs
+    restart: unless-stopped
