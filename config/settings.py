@@ -13,11 +13,18 @@ class Settings:
     
     # CORS - Orígenes permitidos
     ALLOWED_ORIGINS: list[str] = [
+        # Desarrollo local
         "http://localhost:5173",
         "http://localhost:3000",
         "http://localhost:5174",
+        # Producción
         "https://proyectodni.netlify.app",
-        "*"  # ⚠️ En producción, elimina esto y deja solo dominios específicos
+        "https://defiendetuidentidad.es",
+        "https://www.defiendetuidentidad.es",
+        "https://defiendetuidentidad.com",
+        "https://www.defiendetuidentidad.com",
+        "https://protegetuidentidad.es",
+        "https://www.protegetuidentidad.es",
     ]
     
     # YOLO - Parámetros de detección
