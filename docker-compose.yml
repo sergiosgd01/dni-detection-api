@@ -3,7 +3,7 @@ services:
     build: .
     container_name: dni-api
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - PORT=8000
       - MODEL_PATH=model/model_trained_yolov8-seg_sergio.pt
