@@ -11,13 +11,15 @@ class Settings:
     # Modelo
     MODEL_PATH: str = os.getenv("MODEL_PATH", "model/model_trained_yolov8-seg_sergio.pt")
     
-    # CORS - Orígenes permitidos
-    ALLOWED_ORIGINS: list[str] = [
-        # Desarrollo local
+    # CORS. Solo las webs propias pueden llamar a la API desde el navegador
+    DEV_ORIGINS: list[str] = [
         "http://localhost:5173",
+        "https://localhost:5173",
         "http://localhost:3000",
         "http://localhost:5174",
-        # Producción
+    ]
+
+    PRODUCTION_ORIGINS: list[str] = [
         "https://proyectodni.netlify.app",
         "https://defiendetuidentidad.es",
         "https://www.defiendetuidentidad.es",
@@ -42,16 +44,27 @@ class Settings:
     PORT: int = int(os.getenv("PORT", 8000))
     HOST: str = "0.0.0.0"
     
-    # Entorno
+    # Entorno. Se lee de ENVIRONMENT (docker-compose ya pone "production").
+    # Si no está definida se asume producción, así un despliegue sin variables
+    # nunca deja la documentación abierta.
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production").strip().lower()
+
     @property
     def is_production(self) -> bool:
-        """Detecta si estamos en producción (Render)"""
-        return os.getenv('RENDER') is not None
-    
+        """True salvo que ENVIRONMENT sea "development" """
+        return self.ENVIRONMENT != "development"
+
     @property
     def environment(self) -> str:
         """Retorna el nombre del entorno"""
         return "production" if self.is_production else "development"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Orígenes permitidos. Los de localhost solo en desarrollo"""
+        if self.is_production:
+            return self.PRODUCTION_ORIGINS
+        return self.PRODUCTION_ORIGINS + self.DEV_ORIGINS
 
 
 # Instancia única de configuración

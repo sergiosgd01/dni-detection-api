@@ -53,39 +53,39 @@ async def lifespan(app: FastAPI):
     set_model(None)
 
 
+# La documentación (/docs, /redoc, /openapi.json) solo existe en desarrollo
+docs_enabled = not settings.is_production
+
 # Crear aplicación FastAPI
 app = FastAPI(
     title="DNI Segmentation API",
-    description="API para detección y recorte de DNI usando YOLO11n - Versión Modular",
+    description="API para detección y recorte de DNI",
     version="1.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc"
+    docs_url="/docs" if docs_enabled else None,
+    redoc_url="/redoc" if docs_enabled else None,
+    openapi_url="/openapi.json" if docs_enabled else None
 )
 
-# Configurar CORS
+# CORS. Solo las webs propias, sin credenciales
+# El frontend lee la cabecera x-confidence, por eso se expone
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"]
+    allow_origins=settings.cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+    expose_headers=["x-confidence", "x-process-status"]
 )
 
-# Middleware adicional para manejar ngrok y CORS
+# Cabeceras de seguridad básicas en todas las respuestas
 @app.middleware("http")
-async def add_process_time_header(request, call_next):
+async def add_security_headers(request, call_next):
     response = await call_next(request)
-    
-    # Headers para ngrok
-    response.headers["ngrok-skip-browser-warning"] = "true"
-    
-    # Headers CORS adicionales (por si acaso)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 # Incluir rutas desde el módulo api

@@ -2,11 +2,10 @@
 Endpoints de la API
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException, status
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 import io
 import logging
 
-from config.settings import settings
 from detection.validators import validate_image_file, validate_file_size
 from detection.image_utils import decode_image, encode_image_to_jpeg
 # process_yolo_detection ahora devuelve la imagen final procesada
@@ -20,19 +19,10 @@ router = APIRouter()
 
 @router.get("/")
 async def root():
-    """Endpoint raíz con información de la API"""
+    """Endpoint raíz. No expone detalles internos"""
     return {
         "service": "DNI Segmentation API",
-        "version": "1.0.0",
-        "status": "running",
-        "environment": settings.environment,
-        "model_loaded": get_model() is not None,
-        "endpoints": {
-            "process": "/process",
-            "process_debug": "/process-debug",
-            "health": "/health",
-            "docs": "/docs"
-        }
+        "status": "running"
     }
 
 
@@ -49,8 +39,7 @@ async def health_check():
     
     return {
         "status": "healthy",
-        "model_loaded": True,
-        "environment": settings.environment
+        "model_loaded": True
     }
 
 
@@ -73,7 +62,8 @@ async def process_image(file: UploadFile = File(...)):
                 detail="No se pudo decodificar la imagen. Archivo corrupto."
             )
         
-        logger.info(f"📸 Procesando: {file.filename} ({frame.shape[1]}x{frame.shape[0]})")
+        # No se registra el nombre del archivo, a menudo incluye nombres o números de DNI
+        logger.info(f"📸 Procesando imagen ({frame.shape[1]}x{frame.shape[0]})")
         
         # 3. Procesamiento Integral (YOLO + Warp + Enhance)
         # process_yolo_detection ahora retorna la imagen final lista
@@ -107,55 +97,9 @@ async def process_image(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
+        # El detalle se queda en el log del servidor, al cliente solo le llega un mensaje genérico
         logger.error(f"❌ Error inesperado: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error interno del servidor: {str(e)}"
-        )
-
-
-@router.post("/process-debug")
-async def process_image_debug(file: UploadFile = File(...)):
-    """
-    🔍 Endpoint de Debug: Devuelve JSON con metadatos del proceso
-    """
-    try:
-        validate_image_file(file)
-        contents = await file.read()
-        validate_file_size(contents)
-        
-        frame = decode_image(contents)
-        if frame is None:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Imagen inválida"}
-            )
-        
-        # Ejecutar proceso
-        processed_image, confidence = process_yolo_detection(frame)
-        
-        return {
-            "success": True,
-            "confidence": float(confidence) if confidence else 0.0,
-            "original_size": {
-                "width": frame.shape[1], 
-                "height": frame.shape[0]
-            },
-            "processed_size": {
-                "width": processed_image.shape[1], 
-                "height": processed_image.shape[0]
-            },
-            "environment": settings.environment
-        }
-        
-    except HTTPException as e:
-        return JSONResponse(
-            status_code=e.status_code,
-            content={"error": e.detail}
-        )
-    except Exception as e:
-        logger.error(f"Error en debug: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
+            detail="Error interno al procesar la imagen. Inténtalo de nuevo."
         )
