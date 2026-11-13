@@ -34,6 +34,14 @@ class Settings:
     MIN_CONFIDENCE_OUTPUT: float = 0.80  # Confianza mínima para devolver resultado
     MASK_THRESHOLD: float = 0.5
     IMG_SIZE: int = 640
+    # Segundo intento para escaneos y fotos recortadas al borde del DNI. El modelo no encuentra la tarjeta si no ve
+    # fondo alrededor, así que, si falla, se repite con este margen (fracción del lado mayor) de color de mesa de madera.
+    # Con 0 no se reintenta.
+    MARGEN_REINTENTO: float = float(os.getenv("MARGEN_REINTENTO", 0.25))
+    COLOR_MARGEN_REINTENTO: tuple[int, int, int] = (52, 88, 128)  # BGR
+    # El segundo intento solo vale si el DNI ocupa al menos esta fracción de la foto. Si ocupa menos, ya había fondo
+    # alrededor y el primer intento falló por otra causa, así que se deja el error de antes.
+    OCUPACION_MINIMA_REINTENTO: float = 0.5
     
     # Archivos
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
