@@ -2,8 +2,7 @@
 Endpoints de la API
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException, status
-from fastapi.responses import StreamingResponse
-import io
+from fastapi.responses import Response
 import logging
 
 from detection.validators import validate_image_file, validate_file_size
@@ -82,17 +81,13 @@ async def process_image(file: UploadFile = File(...)):
                 detail="Error al codificar la imagen procesada"
             )
         
-        # 6. Crear respuesta streaming
-        response = StreamingResponse(
-            io.BytesIO(img_bytes),
-            media_type="image/jpeg"
+        # 6. Respuesta de una sola pieza. StreamingResponse con BytesIO troceaba el JPEG por cada byte 0x0A,
+        # unos 26.000 fragmentos en una respuesta de 9 MB, y solo el envío tardaba más de 2 segundos
+        return Response(
+            content=img_bytes,
+            media_type="image/jpeg",
+            headers={"x-confidence": str(confidence), "x-process-status": "success"},
         )
-        
-        # Headers informativos
-        response.headers["x-confidence"] = str(confidence)
-        response.headers["x-process-status"] = "success"
-        
-        return response
         
     except HTTPException:
         raise
