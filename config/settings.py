@@ -38,7 +38,10 @@ class Settings:
     # Archivos
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
     ALLOWED_EXTENSIONS: Set[str] = {'.jpg', '.jpeg', '.png', '.webp'}
-    JPEG_QUALITY: int = 95
+    JPEG_QUALITY: int = 90
+    # Lado mayor del DNI recortado. 2000 px son unos 590 ppp en un DNI de 85,6 mm, de sobra para leerlo e imprimirlo.
+    # Las fotos con menos resolución se devuelven tal cual, sin ampliar.
+    MAX_LADO_SALIDA: int = int(os.getenv("MAX_LADO_SALIDA", 2000))
     
     # Servidor
     PORT: int = int(os.getenv("PORT", 8000))

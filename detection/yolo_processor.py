@@ -87,7 +87,7 @@ def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[floa
         pts = approx.reshape(4, 2).astype(np.float32)
         
         # Aplicar transformación
-        warped_dni = four_point_transform(frame, pts, scale=4)
+        warped_dni = four_point_transform(frame, pts, max_lado=settings.MAX_LADO_SALIDA)
         
         if warped_dni is None:
             raise_detection_error("warp_error", "Error calculando la perspectiva")
