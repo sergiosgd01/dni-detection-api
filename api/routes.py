@@ -3,6 +3,7 @@ Endpoints de la API
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException, status
 from fastapi.responses import Response
+import json
 import logging
 
 from detection.validators import validate_image_file, validate_file_size
@@ -66,7 +67,7 @@ async def process_image(file: UploadFile = File(...)):
         
         # 3. Procesamiento Integral (YOLO + Warp + Enhance)
         # process_yolo_detection ahora retorna la imagen final lista
-        processed_image, confidence = process_yolo_detection(frame)
+        processed_image, confidence, esquinas = process_yolo_detection(frame)
         
         logger.info(f"🎯 DNI procesado con confianza: {confidence:.2%}")
         
@@ -81,12 +82,24 @@ async def process_image(file: UploadFile = File(...)):
                 detail="Error al codificar la imagen procesada"
             )
         
+        # Las esquinas del recorte, en píxeles de la foto recibida. Con ellas la web abre el recorte manual ya
+        # colocado si la persona quiere corregirlo. Son solo posiciones, no llevan nada del documento
+        cabecera_esquinas = json.dumps({
+            "ancho": int(frame.shape[1]),
+            "alto": int(frame.shape[0]),
+            "puntos": [[round(float(x), 1), round(float(y), 1)] for x, y in esquinas],
+        }, separators=(",", ":"))
+
         # 6. Respuesta de una sola pieza. StreamingResponse con BytesIO troceaba el JPEG por cada byte 0x0A,
         # unos 26.000 fragmentos en una respuesta de 9 MB, y solo el envío tardaba más de 2 segundos
         return Response(
             content=img_bytes,
             media_type="image/jpeg",
-            headers={"x-confidence": str(confidence), "x-process-status": "success"},
+            headers={
+                "x-confidence": str(confidence),
+                "x-process-status": "success",
+                "x-esquinas": cabecera_esquinas,
+            },
         )
         
     except HTTPException:

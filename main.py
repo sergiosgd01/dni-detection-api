@@ -68,14 +68,14 @@ app = FastAPI(
 )
 
 # CORS. Solo las webs propias, sin credenciales
-# El frontend lee la cabecera x-confidence, por eso se expone
+# El frontend lee las cabeceras x-confidence y x-esquinas, por eso se exponen
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
-    expose_headers=["x-confidence", "x-process-status"]
+    expose_headers=["x-confidence", "x-process-status", "x-esquinas"]
 )
 
 # Cabeceras de seguridad básicas en todas las respuestas

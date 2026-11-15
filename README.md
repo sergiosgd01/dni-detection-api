@@ -92,6 +92,7 @@ Procesa una imagen de DNI
 - Status: `200 OK`
 - Content-Type: `image/jpeg`
 - Header: `x-confidence: 0.95`
+- Header: `x-esquinas: {"ancho":3000,"alto":1835,"puntos":[[12.0,8.5],[2990.0,10.0],[2988.5,1830.0],[10.0,1828.0]]}`. Las cuatro esquinas del recorte en píxeles de la foto enviada, en orden superior izquierda, superior derecha, inferior derecha e inferior izquierda. La web las usa para abrir el recorte manual ya colocado
 
 **Errores controlados:**
 

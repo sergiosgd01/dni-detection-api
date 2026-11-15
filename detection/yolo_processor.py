@@ -8,7 +8,7 @@ import logging
 from typing import Tuple, Optional
 
 from config.settings import settings
-from detection.geometry_utils import four_point_transform 
+from detection.geometry_utils import four_point_transform, order_points
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,13 @@ def segmentar_con_margen(frame: np.ndarray) -> Tuple[np.ndarray, float]:
     return contorno, confianza
 
 
-def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[float]]:
+def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[float], np.ndarray]:
     """
     Ejecuta detección YOLO y aplica la tubería de corrección.
+
+    Devuelve el DNI enderezado, la confianza y las cuatro esquinas con las que se ha recortado. Las esquinas
+    van en píxeles de la foto recibida y en el orden superior izquierda, superior derecha, inferior derecha
+    e inferior izquierda, el mismo con el que se endereza.
     """
     if model is None:
         raise HTTPException(
@@ -159,7 +163,7 @@ def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[floa
             raise_detection_error("warp_error", "Error calculando la perspectiva")
 
         # 👈 Devolver directamente sin enhance (mantiene color original)
-        return warped_dni, confidence
+        return warped_dni, confidence, order_points(pts)
     else:
         raise_detection_error("geometry_error", "No se pudieron determinar las 4 esquinas del DNI")
 
