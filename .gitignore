@@ -28,6 +28,9 @@ Thumbs.db
 ngrok_url.txt
 *.tmp
 
+# Ajustes propios del servidor, como los límites de /process (ver DEPLOY.md)
+docker-compose.override.yml
+
 # Modelos (IMPORTANTE: Si tu modelo crece, usa Git LFS)
 # model/*.pt
 

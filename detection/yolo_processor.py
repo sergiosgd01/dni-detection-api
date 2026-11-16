@@ -70,6 +70,20 @@ def segmentar(imagen: np.ndarray) -> Tuple[np.ndarray, float]:
     return mask_data, confidence
 
 
+def calentar_modelo() -> None:
+    """
+    Pasa el modelo una vez por una imagen vacía.
+
+    Ultralytics prepara el modelo (fusiona capas y crea el predictor) en la primera predicción. Si eso pasa con dos
+    fotos a la vez en dos hilos, las dos lo preparan al mismo tiempo. Después las predicciones ya van de una en una,
+    porque el predictor tiene su propio cerrojo.
+    """
+    try:
+        segmentar(np.zeros((settings.IMG_SIZE, settings.IMG_SIZE, 3), dtype=np.uint8))
+    except DeteccionFallida:
+        pass
+
+
 def segmentar_con_margen(frame: np.ndarray) -> Tuple[np.ndarray, float]:
     """
     Repite la detección con un margen alrededor de la foto y devuelve el contorno en coordenadas de la foto original.

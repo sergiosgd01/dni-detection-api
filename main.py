@@ -6,8 +6,9 @@ import logging
 
 from config.settings import settings
 from detection.model_utils import cargar_modelo
-from detection.yolo_processor import set_model
+from detection.yolo_processor import set_model, calentar_modelo
 from api.routes import router
+from api.proteccion import ProteccionMiddleware, limite_peticiones
 
 # Configuración de logging
 logging.basicConfig(
@@ -41,6 +42,9 @@ async def lifespan(app: FastAPI):
         logger.info(f"📦 Cargando modelo YOLO desde: {settings.MODEL_PATH}")
         model = cargar_modelo(str(model_path))
         set_model(model)  # Establecer modelo global en yolo_processor
+        # Ultralytics prepara el modelo en la primera predicción. Se hace ya, para que dos primeras fotos que
+        # lleguen a la vez no lo preparen las dos al mismo tiempo
+        calentar_modelo()
         logger.info("✅ Modelo YOLO cargado exitosamente")
     except Exception as e:
         logger.error(f"❌ Error cargando modelo: {e}", exc_info=True)
@@ -67,15 +71,20 @@ app = FastAPI(
     openapi_url="/openapi.json" if docs_enabled else None
 )
 
+# Límite de peticiones y de tamaño del cuerpo, antes de leerlo. Se añade antes que CORS para quedar dentro de él,
+# así sus respuestas 413 y 429 también llevan las cabeceras de CORS y la web puede leer el mensaje
+app.add_middleware(ProteccionMiddleware, limite=limite_peticiones)
+
 # CORS. Solo las webs propias, sin credenciales
-# El frontend lee las cabeceras x-confidence y x-esquinas, por eso se exponen
+# El frontend lee las cabeceras x-confidence y x-esquinas, por eso se exponen. Retry-After dice cuánto esperar
+# tras un 429 o un 503
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
-    expose_headers=["x-confidence", "x-process-status", "x-esquinas"]
+    expose_headers=["x-confidence", "x-process-status", "x-esquinas", "Retry-After"]
 )
 
 # Cabeceras de seguridad básicas en todas las respuestas

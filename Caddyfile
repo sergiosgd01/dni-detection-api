@@ -1,3 +1,46 @@
+# Caddy corre en el servidor fuera de Docker y pone el HTTPS. La API solo escucha en 127.0.0.1:8000, así que todo
+# lo que le llega pasa antes por aquí. Hace falta Caddy 2.7 o posterior (client_ip_headers y {client_ip}).
+#
+# Los rangos de Cloudflare aparecen dos veces, en trusted_proxies y en @fuera_de_cloudflare, y tienen que ser los
+# mismos. Salen de https://www.cloudflare.com/ips/ (revisados el 15/11/2026). scripts/solo_cloudflare.sh comprueba
+# que coinciden entre sí y con los que publica Cloudflare en ese momento.
+{
+	servers {
+		# Solo a las conexiones que llegan desde Cloudflare se les cree CF-Connecting-IP, que trae la IP del visitante.
+		# A cualquier otra se la identifica por la IP de la propia conexión, que no se puede falsificar.
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		client_ip_headers CF-Connecting-IP
+	}
+}
+
 ia.defiendetuidentidad.es {
-    reverse_proxy localhost:8000
+	# Solo se atiende lo que llega por Cloudflare. Quien llama a la IP del servidor se queda sin respuesta.
+	# No afecta a la renovación del certificado. Esta regla solo está en el sitio HTTPS, y los retos HTTP-01 de
+	# Let's Encrypt van al puerto 80, que Caddy atiende aparte. Además el dominio apunta a Cloudflare, así que esos
+	# retos también llegan desde sus rangos.
+	@fuera_de_cloudflare {
+		not {
+			remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18
+			remote_ip 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13
+			remote_ip 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22
+			remote_ip 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29
+			remote_ip 2c0f:f248::/32
+		}
+	}
+	abort @fuera_de_cloudflare
+
+	# Primera barrera de tamaño, contra cuerpos desmesurados. La API admite fotos de hasta 10 MiB y comprueba el cuerpo
+	# por su cuenta, por Content-Length sin leer nada y, si llega troceado, contando lo que entra. El tope de aquí va
+	# por encima de los 30 MB que la web deja elegir, porque la cámara de la web manda la foto sin reducir y un móvil
+	# de 48 o 50 MP pasa de 10 MiB. Así el 413 lo da la API, en español y con CORS, y la web puede enseñarlo. El de
+	# Caddy no lleva ni cuerpo ni CORS y en el navegador solo se vería «Failed to fetch».
+	request_body {
+		max_size 32MiB
+	}
+
+	reverse_proxy localhost:8000 {
+		# IP real del visitante para el límite de peticiones de la API, calculada arriba con los rangos de Cloudflare.
+		# Sustituye a cualquier X-IP-Cliente que mande el cliente.
+		header_up X-IP-Cliente {client_ip}
+	}
 }

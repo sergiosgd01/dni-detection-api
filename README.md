@@ -115,6 +115,44 @@ Procesa una imagen de DNI
 }
 ```
 
+3. **Foto demasiado grande** (413). Pesa más de 10 MB (`file_too_large`) o tiene más de 50 MP (`image_too_large`). La API lo mira antes de leer el cuerpo entero y antes de decodificar la foto
+```json
+{
+  "detail": {
+    "error": "file_too_large",
+    "message": "La foto pesa más de 10 MB, el máximo que admite el servidor.",
+    "action": "retry",
+    "suggestion": "Prueba con otra foto o hazla con menos resolución."
+  }
+}
+```
+
+4. **Demasiadas fotos desde la misma conexión** (429), con la cabecera `Retry-After` en segundos. Por defecto salta con más de 120 en un minuto
+```json
+{
+  "detail": {
+    "error": "too_many_requests",
+    "message": "Se han enviado demasiadas fotos en poco tiempo desde tu conexión.",
+    "action": "retry",
+    "suggestion": "Espera 27 segundos y vuelve a intentarlo."
+  }
+}
+```
+
+5. **Servidor ocupado** (503), con `Retry-After: 5`. Ya hay 2 fotos recortándose y 20 esperando turno
+```json
+{
+  "detail": {
+    "error": "server_busy",
+    "message": "El servidor está recortando muchas fotos a la vez.",
+    "action": "retry",
+    "suggestion": "Espera unos segundos y vuelve a intentarlo."
+  }
+}
+```
+
+Los límites, cómo cambiarlos y cómo llega a la API la IP real del visitante están en `DEPLOY.md`.
+
 ### `POST /process-debug`
 Versión de debug que devuelve JSON con información detallada
 

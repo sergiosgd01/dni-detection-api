@@ -29,4 +29,7 @@ COPY . .
 EXPOSE 8000
 
 # Comando para iniciar la aplicación
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-proxy-headers deja en la petición la IP de la conexión tal cual. Sin él, si la conexión llegara desde 127.0.0.1,
+# uvicorn la cambiaría por la última de X-Forwarded-For, que detrás de Cloudflare es la de un nodo de Cloudflare, y el
+# límite por IP de la API (api/proteccion.py) dejaría de distinguir a los visitantes
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

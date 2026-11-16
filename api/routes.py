@@ -3,10 +3,12 @@ Endpoints de la API
 """
 from fastapi import APIRouter, UploadFile, File, HTTPException, status
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 import json
 import logging
 
-from detection.validators import validate_image_file, validate_file_size
+from api.proteccion import turnos_recorte
+from detection.validators import validate_image_file, validate_file_size, validate_image_dimensions
 from detection.image_utils import decode_image, encode_image_to_jpeg
 # process_yolo_detection ahora devuelve la imagen final procesada
 from detection.yolo_processor import process_yolo_detection, validate_confidence, get_model
@@ -43,52 +45,69 @@ async def health_check():
     }
 
 
+def recortar(contents: bytes) -> tuple[bytes, float, str]:
+    """
+    Decodifica la foto, recorta el DNI y lo codifica en JPEG. Devuelve el JPEG, la confianza y la cabecera x-esquinas.
+
+    Todo es cálculo, así que se ejecuta en un hilo aparte para no parar el bucle de eventos del servidor.
+    """
+    # 2. Decodificar imagen. Antes se ha comprobado en su cabecera que no tiene demasiados píxeles
+    frame = decode_image(contents)
+    if frame is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No se pudo decodificar la imagen. Archivo corrupto."
+        )
+    
+    # No se registra el nombre del archivo, a menudo incluye nombres o números de DNI
+    logger.info(f"📸 Procesando imagen ({frame.shape[1]}x{frame.shape[0]})")
+    
+    # 3. Procesamiento Integral (YOLO + Warp + Enhance)
+    # process_yolo_detection ahora retorna la imagen final lista
+    processed_image, confidence, esquinas = process_yolo_detection(frame)
+    
+    logger.info(f"🎯 DNI procesado con confianza: {confidence:.2%}")
+    
+    # 4. Validar confianza
+    validate_confidence(confidence)
+    
+    # 5. Codificar imagen de salida
+    img_bytes = encode_image_to_jpeg(processed_image)
+    if img_bytes is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al codificar la imagen procesada"
+        )
+    
+    # Las esquinas del recorte, en píxeles de la foto recibida. Con ellas la web abre el recorte manual ya
+    # colocado si la persona quiere corregirlo. Son solo posiciones, no llevan nada del documento
+    cabecera_esquinas = json.dumps({
+        "ancho": int(frame.shape[1]),
+        "alto": int(frame.shape[0]),
+        "puntos": [[round(float(x), 1), round(float(y), 1)] for x, y in esquinas],
+    }, separators=(",", ":"))
+
+    return img_bytes, confidence, cabecera_esquinas
+
+
 @router.post("/process")
 async def process_image(file: UploadFile = File(...)):
     """
     🎯 Endpoint principal: Detecta -> Recorta -> Mejora -> Devuelve JPEG
     """
     try:
-        # 1. Validaciones iniciales
+        # 1. Validaciones iniciales. El tamaño del cuerpo ya lo ha limitado ProteccionMiddleware al recibirlo
         validate_image_file(file)
         contents = await file.read()
         validate_file_size(contents)
-        
-        # 2. Decodificar imagen
-        frame = decode_image(contents)
-        if frame is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se pudo decodificar la imagen. Archivo corrupto."
-            )
-        
-        # No se registra el nombre del archivo, a menudo incluye nombres o números de DNI
-        logger.info(f"📸 Procesando imagen ({frame.shape[1]}x{frame.shape[0]})")
-        
-        # 3. Procesamiento Integral (YOLO + Warp + Enhance)
-        # process_yolo_detection ahora retorna la imagen final lista
-        processed_image, confidence, esquinas = process_yolo_detection(frame)
-        
-        logger.info(f"🎯 DNI procesado con confianza: {confidence:.2%}")
-        
-        # 4. Validar confianza
-        validate_confidence(confidence)
-        
-        # 5. Codificar imagen de salida
-        img_bytes = encode_image_to_jpeg(processed_image)
-        if img_bytes is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error al codificar la imagen procesada"
-            )
-        
-        # Las esquinas del recorte, en píxeles de la foto recibida. Con ellas la web abre el recorte manual ya
-        # colocado si la persona quiere corregirlo. Son solo posiciones, no llevan nada del documento
-        cabecera_esquinas = json.dumps({
-            "ancho": int(frame.shape[1]),
-            "alto": int(frame.shape[0]),
-            "puntos": [[round(float(x), 1), round(float(y), 1)] for x, y in esquinas],
-        }, separators=(",", ":"))
+        # Ancho y alto leídos de la cabecera de la foto, sin decodificarla. Una bomba de descompresión se rechaza aquí,
+        # antes de ocupar un turno o un sitio en la cola
+        await run_in_threadpool(validate_image_dimensions, contents)
+
+        # 2 a 5. Recorte en un hilo aparte y por turnos. Así el servidor sigue atendiendo mientras tanto (/health,
+        # otras subidas) y no se juntan más recortes de los que caben en la CPU
+        async with turnos_recorte:
+            img_bytes, confidence, cabecera_esquinas = await run_in_threadpool(recortar, contents)
 
         # 6. Respuesta de una sola pieza. StreamingResponse con BytesIO troceaba el JPEG por cada byte 0x0A,
         # unos 26.000 fragmentos en una respuesta de 9 MB, y solo el envío tardaba más de 2 segundos
