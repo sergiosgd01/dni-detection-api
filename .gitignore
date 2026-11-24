@@ -8,8 +8,9 @@ venv/
 env/
 ENV/
 
-# Logs
+# Logs (también los que Windows guarda como .log.txt)
 *.log
+*.log.txt
 cloudflared.log
 cloudflared_err.log
 ngrok.log
@@ -40,7 +41,8 @@ docker-compose.override.yml
 # Archivos de test
 test_images/
 
-# Scripts locales de desarrollo
+# Scripts locales de desarrollo con ngrok, de antes de servir la API desde Hetzner. Se quitaron del repositorio
+# el 24/11/2026 (LIMP-4)
 autostart_ngrok.bat
 iniciar_dni_api.bat
 start_ngrok.ps1
