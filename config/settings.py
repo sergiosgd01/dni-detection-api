@@ -40,9 +40,24 @@ class Settings:
     MARGEN_REINTENTO: float = float(os.getenv("MARGEN_REINTENTO", 0.25))
     COLOR_MARGEN_REINTENTO: tuple[int, int, int] = (52, 88, 128)  # BGR
     # El segundo intento solo vale si el DNI ocupa al menos esta fracción de la foto. Si ocupa menos, ya había fondo
-    # alrededor y el primer intento falló por otra causa, así que se deja el error de antes.
-    OCUPACION_MINIMA_REINTENTO: float = 0.5
-    
+    # alrededor y el primer intento falló por otra causa, así que se deja el error de antes. Era 0,5 y desde el
+    # 24/11/2026 es 0,25 (FLU-1). Así pasan las fotos con poca luz (C03) y la trasera sobreexpuesta de C05, que el
+    # segundo intento ya reconocía con más del 80 % de confianza. Ninguna otra foto del banco cambia. Se esperó a CEN-3,
+    # que tapa en su sitio o pide a mano lo marcado que el modelo de campos no encuentra en esas fotos
+    OCUPACION_MINIMA_REINTENTO: float = float(os.getenv("OCUPACION_MINIMA_REINTENTO", 0.25))
+    # Esquinas del recorte (FLU-3, ver esquinas_del_dni en detection/yolo_processor.py). Con ESQUINAS_POR_LADOS a 0
+    # solo se usa el polígono de siempre. Para las esquinas por los lados, si el DNI está girado al menos
+    # GIRO_SEGUNDA_PASADA grados (con 0 no se mira el giro) o su lado mayor ocupa menos de DNI_PEQUENO del lado mayor
+    # de la foto, su zona pasa otra vez por el modelo, derecha y de cerca, con MARGEN_SEGUNDA_PASADA de fondo alrededor
+    # (fracción de su lado mayor)
+    ESQUINAS_POR_LADOS: bool = os.getenv("ESQUINAS_POR_LADOS", "1") != "0"
+    # Las esquinas por los lados solo se usan si se separan de las del polígono al menos esta fracción de la
+    # diagonal. Por debajo el polígono no ha fallado y el recorte queda como siempre (ver esquinas_del_dni)
+    SEPARACION_ESQUINAS: float = float(os.getenv("SEPARACION_ESQUINAS", 0.05))
+    GIRO_SEGUNDA_PASADA: float = float(os.getenv("GIRO_SEGUNDA_PASADA", 4))
+    DNI_PEQUENO: float = float(os.getenv("DNI_PEQUENO", 0.5))
+    MARGEN_SEGUNDA_PASADA: float = float(os.getenv("MARGEN_SEGUNDA_PASADA", 0.25))
+
     # Archivos
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
     ALLOWED_EXTENSIONS: Set[str] = {'.jpg', '.jpeg', '.png', '.webp'}

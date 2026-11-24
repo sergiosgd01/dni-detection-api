@@ -5,9 +5,13 @@ import numpy as np
 import cv2
 from fastapi import HTTPException, status
 import logging
+from ultralytics.data.converter import merge_multi_segment
+from ultralytics.utils import ops
 from typing import Tuple, Optional
 
 from config.settings import settings
+from detection.esquinas import (angulo_del_dni, esquinas_por_lados, esquinas_por_poligono, girar_puntos, mismo_dni,
+                                segmentar_de_cerca, separacion_esquinas)
 from detection.geometry_utils import four_point_transform, order_points
 
 logger = logging.getLogger(__name__)
@@ -61,13 +65,31 @@ def segmentar(imagen: np.ndarray) -> Tuple[np.ndarray, float]:
         confidence = 0.0
         best_idx = 0
 
-    # Obtener coordenadas XY del polígono
-    mask_data = result.masks.xy[best_idx]
-    
+    mask_data = contorno_sin_manchas(result, best_idx)
+
     if len(mask_data) < 4:
         raise DeteccionFallida("invalid_mask", "La máscara detectada tiene muy pocos puntos")
 
-    return mask_data, confidence
+    return np.asarray(mask_data, dtype=np.float32), confidence
+
+
+def contorno_sin_manchas(result, indice: int) -> np.ndarray:
+    """
+    Contorno de la máscara en píxeles de la foto, como `result.masks.xy[indice]` pero sin las manchas sueltas.
+
+    Ultralytics junta en un solo contorno todos los trozos de la máscara, y a veces hay una mancha pequeña en el fondo,
+    lejos del DNI. El contorno saltaba hasta ella y torcía las esquinas. Ahora se quitan los trozos de menos del 5 %
+    del área del mayor. Si el DNI queda partido en trozos grandes (un dedo que lo cruza), se siguen juntando.
+    """
+    mascara = result.masks.data[indice].byte().cpu().numpy()
+    contornos = cv2.findContours(mascara, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+    if not contornos:
+        return np.zeros((0, 2), dtype=np.float32)
+    areas = [cv2.contourArea(c) for c in contornos]
+    grandes = [c.reshape(-1, 2) for c, a in zip(contornos, areas) if a >= 0.05 * max(areas)]
+    puntos = np.concatenate(merge_multi_segment(grandes)) if len(grandes) > 1 else grandes[0]
+    return ops.scale_coords(result.masks.data.shape[1:], puntos.astype(np.float32), result.masks.orig_shape,
+                            normalize=False)
 
 
 def calentar_modelo() -> None:
@@ -149,37 +171,75 @@ def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[floa
     if fallo is not None:
         raise_detection_error(fallo.code, fallo.msg)
 
-    contour = np.array(mask_data, dtype=np.int32)
-    
-    # Intentar aproximación a 4 puntos
-    approx = None
-    for epsilon_factor in [0.01, 0.02, 0.03, 0.05]:
-        epsilon = epsilon_factor * cv2.arcLength(contour, True)
-        temp_approx = cv2.approxPolyDP(contour, epsilon, True)
-        if len(temp_approx) == 4:
-            approx = temp_approx
-            break
-    
-    # Si no funciona, usar minAreaRect
-    if approx is None or len(approx) != 4:
-        rect = cv2.minAreaRect(contour)
-        box = cv2.boxPoints(rect)
-        approx = np.int32(box)
-    
-    # Validar y Transformar
-    if len(approx) == 4:
-        pts = approx.reshape(4, 2).astype(np.float32)
-        
-        # Aplicar transformación
-        warped_dni = four_point_transform(frame, pts, max_lado=settings.MAX_LADO_SALIDA)
-        
-        if warped_dni is None:
-            raise_detection_error("warp_error", "Error calculando la perspectiva")
+    pts = esquinas_del_dni(frame, np.array(mask_data, dtype=np.float32))
 
-        # 👈 Devolver directamente sin enhance (mantiene color original)
-        return warped_dni, confidence, order_points(pts)
-    else:
-        raise_detection_error("geometry_error", "No se pudieron determinar las 4 esquinas del DNI")
+    warped_dni = four_point_transform(frame, pts, max_lado=settings.MAX_LADO_SALIDA)
+    if warped_dni is None:
+        raise_detection_error("warp_error", "Error calculando la perspectiva")
+
+    # Se devuelve sin retocar, con el color original
+    return warped_dni, confidence, order_points(pts)
+
+
+def esquinas_del_dni(frame: np.ndarray, contorno: np.ndarray) -> np.ndarray:
+    """
+    Las cuatro esquinas del DNI en píxeles de la foto (FLU-3, ver detection/esquinas.py).
+
+    Se calculan de las dos formas, con el polígono de siempre y con las rectas de los lados (con otra pasada del
+    modelo de cerca si el DNI está girado o lejos), y se usan las de siempre salvo que las nuevas se separen de ellas
+    más de SEPARACION_ESQUINAS de la diagonal. Las nuevas se ajustan más a la tarjeta, pero el modelo de campos de la
+    web se entrenó con los recortes de siempre, y en fotos reales con el DNI derecho un recorte un 2 a 4 % distinto le
+    hacía perder algún campo. Solo cuando el polígono falla de verdad (la sombra comida con el DNI girado, un dedo en
+    una esquina) las esquinas se separan más, y entonces las nuevas son mucho mejores.
+    """
+    antiguas = esquinas_por_poligono(contorno)
+    nuevas = esquinas_nuevas(frame, contorno)
+    if nuevas is None:
+        return antiguas
+    separacion = separacion_esquinas(antiguas, nuevas)
+    if separacion < settings.SEPARACION_ESQUINAS:
+        return antiguas
+    logger.info(f"📐 Esquinas por los lados, a un {separacion:.1%} de la diagonal de las del polígono")
+    return nuevas
+
+
+def esquinas_nuevas(frame: np.ndarray, contorno: np.ndarray) -> Optional[np.ndarray]:
+    """Las esquinas por las rectas de los lados, o None si no salen o están desactivadas"""
+    if settings.ESQUINAS_POR_LADOS:
+        try:
+            contorno_lados = contorno
+            alto, ancho = frame.shape[:2]
+            angulo = angulo_del_dni(contorno)
+            _, _, w, h = cv2.boundingRect(contorno.reshape(-1, 2))
+            girado = settings.GIRO_SEGUNDA_PASADA > 0 and abs(angulo) >= settings.GIRO_SEGUNDA_PASADA
+            pequeno = max(w, h) < settings.DNI_PEQUENO * max(ancho, alto)
+            if girado or pequeno:
+                giro = angulo if girado else 0.0
+                # Una segunda pasada de cerca y, si el contorno nuevo, más fino, dice que el DNI sigue girado,
+                # una tercera con el giro corregido
+                for _ in range(2):
+                    try:
+                        cerca, confianza_cerca = segmentar_de_cerca(frame, contorno_lados, giro, segmentar,
+                                                                    settings.IMG_SIZE, settings.MARGEN_SEGUNDA_PASADA)
+                    except DeteccionFallida as e:
+                        logger.info(f"📐 Pasada de cerca sin resultado ({e.code})")
+                        break
+                    if confianza_cerca < settings.MIN_CONFIDENCE_OUTPUT or not mismo_dni(contorno, cerca):
+                        logger.info(f"📐 Pasada de cerca descartada ({confianza_cerca:.2%})")
+                        break
+                    contorno_lados = cerca
+                    resto = angulo_del_dni(girar_puntos(cerca, giro))
+                    logger.info(f"📐 Pasada de cerca con el DNI girado {giro:.1f}°, queda {resto:.1f}°")
+                    if settings.GIRO_SEGUNDA_PASADA <= 0 or abs(resto) < settings.GIRO_SEGUNDA_PASADA:
+                        break
+                    giro += resto
+            esquinas = esquinas_por_lados(contorno_lados, ancho, alto)
+            if esquinas is None:
+                logger.info("📐 Las rectas de los lados no dan un DNI, se usa el polígono")
+            return esquinas
+        except Exception:
+            logger.exception("📐 Error al sacar las esquinas por los lados, se usa el polígono")
+    return None
 
 
 def validate_confidence(confidence: Optional[float]) -> None:

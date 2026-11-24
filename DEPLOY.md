@@ -133,6 +133,26 @@ La API no ve al visitante. Ve a Caddy, y Caddy ve a Cloudflare. La IP real llega
 
 Si la cabecera no llega, por ejemplo con el Caddyfile antiguo, la API no limita por IP, en vez de contar a todo el mundo como si fuera una sola IP. En desarrollo, sin Caddy, cuenta la IP de la conexión. Las IPv6 se cuentan por su red /64, porque cada casa o cada móvil suele tener una entera.
 
+## Cómo se recorta el DNI
+
+Las esquinas salen, como siempre, de simplificar a cuatro puntos el contorno que da el modelo, pero sin las manchas sueltas de la máscara. Con el DNI girado la máscara se come la sombra de la tarjeta en trozos aparte, y antes el contorno saltaba a ellos y el recorte salía torcido (ver `detection/yolo_processor.py`). Además se calculan otras esquinas con las rectas de los cuatro lados (ver `detection/esquinas.py`). Si el DNI está girado o sale pequeño en la foto, para ellas su zona pasa otra vez por el modelo, derecha y de cerca. Solo se usan si se separan de las de siempre más del 5 % de la diagonal, que es cuando el polígono falla de verdad, por ejemplo con un dedo en una esquina. Por debajo el recorte queda como siempre, porque el modelo de campos de la web se entrenó con esos recortes. Cuesta unos milisegundos más, y una pasada más del modelo en las fotos con el DNI girado o lejos.
+
+| Qué | Variable de entorno | Por defecto |
+|---|---|---|
+| Calcular también las esquinas por las rectas de los lados. Con 0 no se calculan | `ESQUINAS_POR_LADOS` | 1 |
+| Separación desde la que se usan las esquinas por los lados, en fracción de la diagonal del DNI | `SEPARACION_ESQUINAS` | 0,05 |
+| Giro desde el que se repite la pasada con el DNI derecho, en grados. Con 0 no se mira el giro | `GIRO_SEGUNDA_PASADA` | 4 |
+| Tamaño por debajo del cual se repite la pasada de cerca (lado mayor del DNI entre lado mayor de la foto) | `DNI_PEQUENO` | 0,5 |
+| Fondo que se deja alrededor del DNI en esa pasada, en fracción de su lado mayor | `MARGEN_SEGUNDA_PASADA` | 0,25 |
+| Lo que tiene que ocupar el DNI en la foto para aceptar el segundo intento con margen (escaneos y fotos con poca luz) | `OCUPACION_MINIMA_REINTENTO` | 0,25 |
+
+Se cambian igual que los límites, con el `docker-compose.override.yml`. Para ver cuántas fotos pasan por la segunda pasada y en cuántas se usan las esquinas por los lados:
+
+```bash
+sudo docker compose logs --since 24h | grep -c "Pasada de cerca con"
+sudo docker compose logs --since 24h | grep -c "Esquinas por los lados"
+```
+
 ## Atender solo a Cloudflare
 
 `ia.defiendetuidentidad.es` apunta a Cloudflare, pero el servidor también contesta a quien lo llama directamente por su IP. Así se salta Cloudflare y sus protecciones. Los pasos de este apartado lo cierran con `scripts/solo_cloudflare.sh`.
