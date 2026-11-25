@@ -137,6 +137,8 @@ Si la cabecera no llega, por ejemplo con el Caddyfile antiguo, la API no limita 
 
 Las esquinas salen, como siempre, de simplificar a cuatro puntos el contorno que da el modelo, pero sin las manchas sueltas de la máscara. Con el DNI girado la máscara se come la sombra de la tarjeta en trozos aparte, y antes el contorno saltaba a ellos y el recorte salía torcido (ver `detection/yolo_processor.py`). Además se calculan otras esquinas con las rectas de los cuatro lados (ver `detection/esquinas.py`). Si el DNI está girado o sale pequeño en la foto, para ellas su zona pasa otra vez por el modelo, derecha y de cerca. Solo se usan si se separan de las de siempre más del 5 % de la diagonal, que es cuando el polígono falla de verdad, por ejemplo con un dedo en una esquina. Por debajo el recorte queda como siempre, porque el modelo de campos de la web se entrenó con esos recortes. Cuesta unos milisegundos más, y una pasada más del modelo en las fotos con el DNI girado o lejos.
 
+Esa misma pasada de cerca sirve también para no rechazar un DNI lejos (FLU-4). Un DNI que ocupa poco de la foto le llega al modelo con pocos píxeles, y la confianza baja aunque se vea bien. Si no llega al mínimo (`MIN_CONFIDENCE_OUTPUT`, 0,80), antes de rechazarlo se mira de cerca, y si así se reconoce y es el mismo DNI vale esa confianza. En las fotos reales del banco, un DNI lejos daba entre 0,70 y 0,80 y de cerca entre 0,90 y 0,97. El recorte sale igual que si la primera pasada hubiera llegado al mínimo.
+
 | Qué | Variable de entorno | Por defecto |
 |---|---|---|
 | Calcular también las esquinas por las rectas de los lados. Con 0 no se calculan | `ESQUINAS_POR_LADOS` | 1 |
@@ -145,12 +147,14 @@ Las esquinas salen, como siempre, de simplificar a cuatro puntos el contorno que
 | Tamaño por debajo del cual se repite la pasada de cerca (lado mayor del DNI entre lado mayor de la foto) | `DNI_PEQUENO` | 0,5 |
 | Fondo que se deja alrededor del DNI en esa pasada, en fracción de su lado mayor | `MARGEN_SEGUNDA_PASADA` | 0,25 |
 | Lo que tiene que ocupar el DNI en la foto para aceptar el segundo intento con margen (escaneos y fotos con poca luz) | `OCUPACION_MINIMA_REINTENTO` | 0,25 |
+| Mirar de cerca un DNI pequeño que no llega a la confianza mínima antes de rechazarlo. Con 0 se rechaza como antes | `CONFIANZA_DE_CERCA` | 1 |
 
-Se cambian igual que los límites, con el `docker-compose.override.yml`. Para ver cuántas fotos pasan por la segunda pasada y en cuántas se usan las esquinas por los lados:
+Se cambian igual que los límites, con el `docker-compose.override.yml`. Para ver cuántas fotos pasan por la segunda pasada, en cuántas se usan las esquinas por los lados y cuántos DNI lejos se han mirado de cerca:
 
 ```bash
 sudo docker compose logs --since 24h | grep -c "Pasada de cerca con"
 sudo docker compose logs --since 24h | grep -c "Esquinas por los lados"
+sudo docker compose logs --since 24h | grep -c "DNI pequeño en la foto"
 ```
 
 ## Atender solo a Cloudflare

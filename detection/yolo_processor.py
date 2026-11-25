@@ -154,6 +154,11 @@ def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[floa
     except DeteccionFallida as e:
         fallo = e
 
+    # Un DNI lejos se mira de cerca antes de rechazarlo (FLU-4, ver confianza_de_cerca). El recorte sale igual que
+    # si la primera pasada hubiera llegado al límite
+    if fallo is None and confidence < settings.MIN_CONFIDENCE_OUTPUT:
+        confidence = confianza_de_cerca(frame, np.array(mask_data, dtype=np.float32), confidence)
+
     # Si no hay un DNI claro se prueba otra vez con margen. Solo se usa si esta vez se reconoce y el DNI llena
     # la foto. Las fotos que ya se reconocían dan el mismo recorte y las demás, el mismo error que antes
     if confidence < settings.MIN_CONFIDENCE_OUTPUT and settings.MARGEN_REINTENTO > 0:
@@ -179,6 +184,40 @@ def process_yolo_detection(frame: np.ndarray) -> Tuple[np.ndarray, Optional[floa
 
     # Se devuelve sin retocar, con el color original
     return warped_dni, confidence, order_points(pts)
+
+
+def confianza_de_cerca(frame: np.ndarray, contorno: np.ndarray, confianza: float) -> float:
+    """
+    La confianza del DNI mirado de cerca, si sale pequeño en la foto (FLU-4), o la de la primera pasada.
+
+    Un DNI que ocupa poco de la foto llega al modelo con pocos píxeles y le da menos confianza aunque se vea bien.
+    En las fotos reales del banco, con el DNI lejos la primera pasada daba entre 0,70 y 0,80 y la pasada de cerca
+    entre 0,90 y 0,97. Es la misma pasada que usan las esquinas (ver esquinas_nuevas), con el DNI derecho y
+    ocupando casi toda la imagen del modelo. Su confianza vale solo si es el mismo DNI (ver mismo_dni).
+    """
+    if not settings.CONFIANZA_DE_CERCA:
+        return confianza
+    alto, ancho = frame.shape[:2]
+    _, _, w, h = cv2.boundingRect(contorno.reshape(-1, 2))
+    if max(w, h) >= settings.DNI_PEQUENO * max(ancho, alto):
+        return confianza
+    try:
+        angulo = angulo_del_dni(contorno)
+        girado = settings.GIRO_SEGUNDA_PASADA > 0 and abs(angulo) >= settings.GIRO_SEGUNDA_PASADA
+        cerca, confianza_cerca = segmentar_de_cerca(frame, contorno, angulo if girado else 0.0, segmentar,
+                                                    settings.IMG_SIZE, settings.MARGEN_SEGUNDA_PASADA)
+    except DeteccionFallida as e:
+        logger.info(f"🔍 DNI pequeño sin resultado de cerca ({e.code}), se queda en {confianza:.2%}")
+        return confianza
+    except Exception:
+        # Un fallo inesperado no debe tumbar la petición. Se sigue como antes de FLU-4
+        logger.exception(f"🔍 Error al mirar de cerca un DNI pequeño, se queda en {confianza:.2%}")
+        return confianza
+    if not mismo_dni(contorno, cerca):
+        logger.info(f"🔍 DNI pequeño, de cerca sale otro contorno ({confianza_cerca:.2%}), se queda en {confianza:.2%}")
+        return confianza
+    logger.info(f"🔍 DNI pequeño en la foto, confianza {confianza:.2%} y de cerca {confianza_cerca:.2%}")
+    return max(confianza, confianza_cerca)
 
 
 def esquinas_del_dni(frame: np.ndarray, contorno: np.ndarray) -> np.ndarray:

@@ -57,6 +57,10 @@ class Settings:
     GIRO_SEGUNDA_PASADA: float = float(os.getenv("GIRO_SEGUNDA_PASADA", 4))
     DNI_PEQUENO: float = float(os.getenv("DNI_PEQUENO", 0.5))
     MARGEN_SEGUNDA_PASADA: float = float(os.getenv("MARGEN_SEGUNDA_PASADA", 0.25))
+    # Un DNI pequeño en la foto (DNI_PEQUENO) que no llega a MIN_CONFIDENCE_OUTPUT se mira de cerca con la misma
+    # pasada, y vale la confianza de cerca si es el mismo DNI (FLU-4, ver confianza_de_cerca en
+    # detection/yolo_processor.py). Con 0 se rechaza como antes
+    CONFIANZA_DE_CERCA: bool = os.getenv("CONFIANZA_DE_CERCA", "1") != "0"
 
     # Archivos
     MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
